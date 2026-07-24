@@ -1,12 +1,10 @@
-FROM python:3.10-slim
+FROM amazoncorretto:17-alpine
 
-# ضبط بيئة العمل
+# تثبيت Python وتبعيات النظام الأساسية
+RUN apk add --no-cache python3 py3-pip wget unzip bash
+
+# إعداد بيئة العمل
 WORKDIR /app
-
-# تثبيت التبعيات الأساسية مع آلية إعادة محاولة لضمان الاستقرار
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends openjdk-17-jre-headless wget unzip && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # إعداد أدوات الأندرويد (SDK)
 ENV ANDROID_SDK_ROOT /opt/android-sdk
@@ -24,7 +22,7 @@ RUN yes | sdkmanager --licenses && \
 
 # تثبيت مكتبات Python
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # نسخ باقي ملفات المشروع
 COPY . .
@@ -42,4 +40,4 @@ RUN keytool -genkeypair -v -keystore /app/data/keystore/debug.jks \
 ENV TELEGRAM_BOT_TOKEN="8253284488:AAFcB6N0UVY-aramsPIAhaKJNUrFsEtrQ4Q"
 
 # تشغيل البوت
-CMD ["python", "src/main.py"]
+CMD ["python3", "src/main.py"]

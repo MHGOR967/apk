@@ -1,7 +1,7 @@
 FROM amazoncorretto:17-alpine
 
-# تثبيت Python وتبعيات النظام الأساسية
-RUN apk add --no-cache python3 py3-pip wget unzip bash
+# تثبيت Python والأدوات اللازمة لبناء المكتبات
+RUN apk add --no-cache python3 py3-pip wget unzip bash build-base python3-dev libffi-dev
 
 # إعداد بيئة العمل
 WORKDIR /app
@@ -19,6 +19,10 @@ RUN mkdir -p $ANDROID_SDK_ROOT/cmdline-tools && \
 # قبول التراخيص وتثبيت أدوات البناء
 RUN yes | sdkmanager --licenses && \
     sdkmanager "build-tools;33.0.0"
+
+# إنشاء بيئة افتراضية لـ Python لتجنب مشاكل الصلاحيات
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 # تثبيت مكتبات Python
 COPY requirements.txt .

@@ -1,4 +1,3 @@
-
 import logging
 import os
 import shutil
@@ -7,27 +6,24 @@ import asyncio
 from telegram import Update, ForceReply
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Enable logging
+# إعداد السجلات (Logging)
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Bot token (will be read from environment variable)
+# توكن البوت
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Base APK path
+# المسارات الأساسية
 BASE_APK_PATH = "/app/data/apks/base.apk"
-# Keystore path
 KEYSTORE_PATH = "/app/data/keystore/debug.jks"
-# Keystore password (for simplicity, hardcoded for now, but should be secure)
 KEYSTORE_PASSWORD = "android"
-# Keystore alias
 KEYSTORE_ALIAS = "androiddebugkey"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sends a message on /start command."""
+    """يستجيب لأمر /start"""
     user = update.effective_user
     await update.message.reply_html(
         f"مرحباً {user.mention_html()}!\nأنا بوت تخصيص APK. أرسل لي توكن بوت تيليجرام الخاص بك لإنشاء تطبيقك المخصص.",
@@ -35,128 +31,112 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles incoming messages, expecting a bot token."""
+    """يعالج الرسائل الواردة (يتوقع توكن البوت)"""
     user_id = update.effective_user.id
     user_token = update.message.text
 
-    if not user_token or not user_token.startswith("bot"):
-        await update.message.reply_text("الرجاء إرسال توكن بوت تيليجرام صالح (يجب أن يبدأ بـ 'bot').")
+    if not user_token or ":" not in user_token:
+        await update.message.reply_text("الرجاء إرسال توكن بوت تيليجرام صالح.")
         return
 
-    await update.message.reply_text("تم استلام التوكن الخاص بك. جاري تخصيص وتوقيع ملف APK...")
+    status_message = await update.message.reply_text("تم استلام التوكن. جاري معالجة الـ APK...")
 
-    # Create a unique temporary directory for the user
+    # إنشاء مجلد مؤقت فريد للمستخدم لضمان العزل التام
     user_temp_dir = os.path.join("/app/temp", str(user_id))
     os.makedirs(user_temp_dir, exist_ok=True)
 
     try:
-        # Copy base APK to user's temp directory
         user_apk_path = os.path.join(user_temp_dir, f"custom_{user_id}.apk")
+        
+        # التأكد من وجود ملف القالب
+        if not os.path.exists(BASE_APK_PATH):
+            await update.message.reply_text("خطأ: ملف base.apk غير موجود في السيرفر.")
+            return
+
+        # نسخ القالب للمجلد المؤقت
         shutil.copy(BASE_APK_PATH, user_apk_path)
 
-        # Modify APK (write token to assets/token.txt)
+        # تعديل الـ APK (إضافة التوكن)
+        await status_message.edit_text("جاري تعديل محتويات الـ APK...")
         await modify_apk(user_apk_path, user_token)
 
-        # Sign the modified APK
+        # توقيع الـ APK
+        await status_message.edit_text("جاري توقيع التطبيق...")
         signed_apk_path = await sign_apk(user_apk_path, user_temp_dir)
 
-        # Send the signed APK back to the user
-        await update.message.reply_document(document=open(signed_apk_path, 'rb'))
-        await update.message.reply_text("تم إنشاء تطبيقك المخصص بنجاح!")
+        # إرسال الملف للمستخدم
+        await status_message.edit_text("تم بنجاح! جاري رفع الملف...")
+        with open(signed_apk_path, 'rb') as apk_file:
+            await update.message.reply_document(
+                document=apk_file,
+                filename="custom_app.apk",
+                caption="تطبيقك المخصص جاهز!"
+            )
 
     except Exception as e:
-        logger.error(f"Error processing APK for user {user_id}: {e}")
-        await update.message.reply_text("حدث خطأ أثناء معالجة طلبك. الرجاء المحاولة مرة أخرى لاحقاً.")
+        logger.error(f"Error for user {user_id}: {e}")
+        await update.message.reply_text(f"حدث خطأ أثناء المعالجة: {str(e)}")
     finally:
-        # Clean up temporary directory
+        # التنظيف الفوري للمجلد المؤقت
         if os.path.exists(user_temp_dir):
             shutil.rmtree(user_temp_dir)
-            logger.info(f"Cleaned up temporary directory for user {user_id}")
+            logger.info(f"Cleaned up for user {user_id}")
 
 async def modify_apk(apk_path: str, token: str) -> None:
-    """Modifies the APK by writing the token to assets/token.txt."""
-    # Create a temporary directory to extract APK contents
-    extract_dir = apk_path + "_extracted"
-    os.makedirs(extract_dir, exist_ok=True)
-
+    """تعديل ملف assets/token.txt داخل الـ APK"""
+    temp_extract = apk_path + "_temp"
+    os.makedirs(temp_extract, exist_ok=True)
+    
     try:
-        with zipfile.ZipFile(apk_path, 'r') as apk_zip:
-            apk_zip.extractall(extract_dir)
-
-        # Write token to assets/token.txt
-        assets_dir = os.path.join(extract_dir, "assets")
-        os.makedirs(assets_dir, exist_ok=True)
-        token_file_path = os.path.join(assets_dir, "token.txt")
-        with open(token_file_path, 'w') as f:
+        with zipfile.ZipFile(apk_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_extract)
+        
+        assets_path = os.path.join(temp_extract, "assets")
+        os.makedirs(assets_path, exist_ok=True)
+        
+        with open(os.path.join(assets_path, "token.txt"), "w") as f:
             f.write(token)
-
-        # Re-zip the APK
-        new_apk_path = apk_path + ".modified"
-        shutil.make_archive(new_apk_path.replace(".apk", ""), 'zip', extract_dir)
-        os.rename(new_apk_path.replace(".zip", ".apk"), apk_path)
-
+            
+        shutil.make_archive(apk_path.replace(".apk", ""), 'zip', temp_extract)
+        os.rename(apk_path.replace(".apk", ".zip"), apk_path)
     finally:
-        if os.path.exists(extract_dir):
-            shutil.rmtree(extract_dir)
+        shutil.rmtree(temp_extract)
 
 async def sign_apk(apk_path: str, output_dir: str) -> str:
-    """Signs the APK using apksigner and zipalign."""
-    unsigned_apk = apk_path
-    aligned_apk = os.path.join(output_dir, os.path.basename(apk_path).replace(".apk", "_aligned.apk"))
-    signed_apk = os.path.join(output_dir, os.path.basename(apk_path).replace(".apk", "_signed.apk"))
+    """توقيع الـ APK باستخدام أدوات الأندرويد"""
+    aligned_apk = os.path.join(output_dir, "aligned.apk")
+    signed_apk = os.path.join(output_dir, "signed.apk")
+    
+    build_tools = "/opt/android-sdk/build-tools/33.0.0"
+    zipalign = os.path.join(build_tools, "zipalign")
+    apksigner = os.path.join(build_tools, "apksigner")
 
-    # Path to Android build tools (where zipalign and apksigner are located)
-    build_tools_path = "/opt/android-sdk/build-tools/33.0.0"
-    zipalign_bin = os.path.join(build_tools_path, "zipalign")
-    apksigner_bin = os.path.join(build_tools_path, "apksigner")
+    # 1. Zipalign
+    cmd_align = f"{zipalign} -p 4 {apk_path} {aligned_apk}"
+    proc = await asyncio.create_subprocess_shell(cmd_align, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    await proc.communicate()
 
-    # 1. Align the APK (important for performance)
-    zipalign_command = f"{zipalign_bin} -p 4 {unsigned_apk} {aligned_apk}"
-    process = await asyncio.create_subprocess_shell(
-        zipalign_command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
-    stdout, stderr = await process.communicate()
-    if process.returncode != 0:
-        raise Exception(f"Zipalign failed: {stderr.decode()}")
-    logger.info(f"Zipalign output: {stdout.decode()}")
-
-    # 2. Sign the aligned APK using apksigner
-    # apksigner sign --ks <keystore_path> --ks-pass pass:<password> --out <signed_apk> <aligned_apk>
-    apksigner_command = (
-        f"{apksigner_bin} sign --ks {KEYSTORE_PATH} --ks-pass pass:{KEYSTORE_PASSWORD} "
-        f"--out {signed_apk} {aligned_apk}"
-    )
-    process = await asyncio.create_subprocess_shell(
-        apksigner_command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
-    stdout, stderr = await process.communicate()
-    if process.returncode != 0:
-        raise Exception(f"Apksigner failed: {stderr.decode()}")
-    logger.info(f"Apksigner output: {stdout.decode()}")
+    # 2. Apksigner
+    cmd_sign = f"{apksigner} sign --ks {KEYSTORE_PATH} --ks-pass pass:{KEYSTORE_PASSWORD} --out {signed_apk} {aligned_apk}"
+    proc = await asyncio.create_subprocess_shell(cmd_sign, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    await proc.communicate()
 
     return signed_apk
 
-async def main() -> None:
-    """Starts the bot."""
+def main() -> None:
+    """تشغيل البوت"""
     if not BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN environment variable not set.")
+        logger.error("No BOT_TOKEN found!")
         return
 
-    # Create the Application and pass it your bot's token.
+    # بناء التطبيق بالطريقة الصحيحة للإصدار الحديث
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # On different commands - answer in Telegram
     application.add_handler(CommandHandler("start", start))
-
-    # On non command messages - echo the message on Telegram
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Run the bot until the user presses Ctrl-C
-    await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # بدء البوت
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

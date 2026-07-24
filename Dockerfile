@@ -1,15 +1,14 @@
-FROM openjdk:17-jdk-slim-buster
+FROM python:3.10-slim
 
-# Install Python and other necessary tools
-RUN apt-get update && apt-get install -y python3 python3-pip wget unzip && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Set python3 as default python
-RUN ln -s /usr/bin/python3 /usr/bin/python
-
+# ضبط بيئة العمل
 WORKDIR /app
 
-# Install Android SDK tools
+# تثبيت التبعيات الأساسية مع آلية إعادة محاولة لضمان الاستقرار
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openjdk-17-jre-headless wget unzip && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# إعداد أدوات الأندرويد (SDK)
 ENV ANDROID_SDK_ROOT /opt/android-sdk
 ENV PATH $PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools
 
@@ -19,23 +18,28 @@ RUN mkdir -p $ANDROID_SDK_ROOT/cmdline-tools && \
     mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest && \
     rm /tmp/sdk-tools.zip
 
-# Accept licenses and install build-tools
+# قبول التراخيص وتثبيت أدوات البناء
 RUN yes | sdkmanager --licenses && \
     sdkmanager "build-tools;33.0.0"
 
+# تثبيت مكتبات Python
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
+# نسخ باقي ملفات المشروع
 COPY . .
 
+# إنشاء المجلدات اللازمة
 RUN mkdir -p /app/data/apks /app/data/keystore /app/temp
 
-# Generate Keystore
+# توليد مفتاح التوقيع
 RUN keytool -genkeypair -v -keystore /app/data/keystore/debug.jks \
     -storepass android -alias androiddebugkey -keypass android \
     -keyalg RSA -keysize 2048 -validity 10000 \
     -dname "CN=Android Debug,O=Android,C=US"
 
+# توكن البوت
 ENV TELEGRAM_BOT_TOKEN="8253284488:AAFcB6N0UVY-aramsPIAhaKJNUrFsEtrQ4Q"
 
-CMD ["python3", "src/main.py"]
+# تشغيل البوت
+CMD ["python", "src/main.py"]
